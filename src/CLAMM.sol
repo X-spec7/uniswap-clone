@@ -5,9 +5,19 @@ import "./lib/Tick.sol";
 import "./lib/Position.sol";
 import "./lib/SafeCast.sol";
 import "./interfaces/IERC20.sol";
+import "./lib/TickMath.sol";
+
+function checkTicks(int24 tickLower, int24 tickUpper) pure {
+  require(tickLower < tickUpper, "tickUpper lower than tickLower");
+  require(tickLower >= TickMath.MIN_TICK, "tickLower lower than MIN_TICK");
+  require(tickUpper <= TickMath.MAX_TICK, "tickUpper greater than MAX_TICK");
+}
 
 contract CLAMM {
   using SafeCast for int256;
+  using Tick for mapping(int24 => Tick.Info);
+  using Position for mapping(bytes32 => Position.Info);
+  using Position for Position.Info;
 
   address public immutable token0;
   address public immutable token1;
@@ -22,10 +32,11 @@ contract CLAMM {
     // the current tick
     int24 tick;
     // whether the pool is locked
-    bool unlocked; 
+    bool unlocked;
   }
 
   Slot0 public slot0;
+  mapping(int24 => Tick.Info) public ticks;
   mapping(bytes32 => Position.Info) public positions;
 
   modifier lock() {
@@ -47,7 +58,7 @@ contract CLAMM {
     tickSpacing = _tickSpacing;
 
     maxLiquidityPerTick = Tick.tickSpacingToMaxLiquidityPerTick(
-        _tickSpacing
+      _tickSpacing
     );
   }
 
@@ -57,6 +68,22 @@ contract CLAMM {
     int24 tick = TickMath.getTickAtSqrtRatio(sqrtPriceX96);
 
     slot0 = Slot0({sqrtPriceX96: sqrtPriceX96, tick: tick, unlocked: true});
+  }
+
+  function _updatePosition(
+    address owner,
+    int24 tickLower,
+    int24 tickUpper,
+    int128 liquidityDelta,
+    int24 tick
+  ) private returns (Position.Info storage position) {
+    position = positions.get(owner, tickLower, tickUpper);
+
+    // TODO: fees
+    uint256 _feeGrowthGlobal0X128 = 0;
+    uint256 _feeGrowthGlobal1X128 = 0;
+
+    position.update(liquidityDelta, _feeGrowthGlobal0X128, _feeGrowthGlobal1X128);
   }
 
   struct ModifyPositionParams {
@@ -71,6 +98,19 @@ contract CLAMM {
 
   function _modifyPosition(ModifyPositionParams memory params)
     private returns (Position.Info storage position, int256 amount0, int256 amount1) {
+      checkTicks(params.tickLower, params.tickUpper);
+
+      // loading slot to memory to save gas
+      Slot0 memory _slot0 = slot0;
+
+      position = _updatePosition(
+        params.owner,
+        params.tickUpper,
+        params.tickLower,
+        params.liquidityDelta,
+        _slot0.tick
+      );
+
       return (positions[bytes32(0)], 0, 0);
   }
 
