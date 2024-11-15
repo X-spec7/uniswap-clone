@@ -6,6 +6,7 @@ import "./lib/Position.sol";
 import "./lib/SafeCast.sol";
 import "./interfaces/IERC20.sol";
 import "./lib/TickMath.sol";
+import "./lib/SqrtPriceMath.sol";
 
 function checkTicks(int24 tickLower, int24 tickUpper) pure {
   require(tickLower < tickUpper, "tickUpper lower than tickLower");
@@ -36,6 +37,7 @@ contract CLAMM {
   }
 
   Slot0 public slot0;
+  uint128 public liquidity;
   mapping(int24 => Tick.Info) public ticks;
   mapping(bytes32 => Position.Info) public positions;
 
@@ -83,7 +85,39 @@ contract CLAMM {
     uint256 _feeGrowthGlobal0X128 = 0;
     uint256 _feeGrowthGlobal1X128 = 0;
 
+    bool flippedLower;
+    bool flippedUpper;
+    if (liquidityDelta != 0) {
+      flippedLower = ticks.update(
+        tickLower,
+        tick,
+        liquidityDelta,
+        _feeGrowthGlobal0X128,
+        _feeGrowthGlobal1X128,
+        false,
+        maxLiquidityPerTick
+      );
+      flippedUpper = ticks.update(
+        tickUpper,
+        tick,
+        liquidityDelta,
+        _feeGrowthGlobal0X128,
+        _feeGrowthGlobal1X128,
+        true,
+        maxLiquidityPerTick
+      );
+    }
+
     position.update(liquidityDelta, _feeGrowthGlobal0X128, _feeGrowthGlobal1X128);
+
+    if (liquidityDelta < 0) {
+      if (flippedLower) {
+        ticks.clear(tickLower);
+      }
+      if (flippedUpper) {
+        ticks.clear(tickUpper);
+      }
+    }
   }
 
   struct ModifyPositionParams {
@@ -111,7 +145,37 @@ contract CLAMM {
         _slot0.tick
       );
 
-      return (positions[bytes32(0)], 0, 0);
+      if (params.liquidityDelta != 0) {
+        if (_slot0.tick < params.tickLower) {
+          amount0 = SqrtPriceMath.getAmount0Delta(
+            TickMath.getSqrtRatioAtTick(params.tickLower),
+            TickMath.getSqrtRatioAtTick(params.tickUpper),
+            params.liquidityDelta
+          );
+        } else if (_slot0.tick < params.tickUpper) {
+          amount0 = SqrtPriceMath.getAmount0Delta(
+            _slot0.sqrtPriceX96,
+            TickMath.getSqrtRatioAtTick(params.tickUpper),
+            params.liquidityDelta
+          );
+          amount1 = SqrtPriceMath.getAmount1Delta(
+            TickMath.getSqrtRatioAtTick(params.tickLower),
+            _slot0.sqrtPriceX96,
+            params.liquidityDelta
+          );
+
+          liquidity = params.liquidityDelta < 0
+            ? liquidity - uint128(-params.liquidityDelta)
+            : liquidity + uint128(params.liquidityDelta);
+
+        } else {
+          amount1 = SqrtPriceMath.getAmount1Delta(
+            TickMath.getSqrtRatioAtTick(params.tickLower),
+            TickMath.getSqrtRatioAtTick(params.tickUpper),
+            params.liquidityDelta
+          );
+        }
+      }
   }
 
   function mint(
