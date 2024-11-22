@@ -77,7 +77,7 @@ contract CLAMM {
     int24 tickLower,
     int24 tickUpper,
     int128 liquidityDelta,
-    int24 tick
+    int24 tick    // current tick
   ) private returns (Position.Info storage position) {
     position = positions.get(owner, tickLower, tickUpper);
 
@@ -206,4 +206,51 @@ contract CLAMM {
       IERC20(token1).transferFrom(msg.sender, address(this), amount1);
     }
   }
+
+  function collect(
+    address recipient,
+    int24 tickLower,
+    int24 tickUpper,
+    uint128 amount0Requested,
+    uint128 amount1Requested
+  ) external lock returns (uint128 amount0, uint128 amount1) {
+    Position.Info storage position = positions.get(msg.sender, tickLower, tickUpper);
+
+    amount0 = amount0Requested > position.tokensOwed0 ? position.tokensOwed0 : amount0Requested;
+    amount1 = amount1Requested > position.tokensOwed1 ? position.tokensOwed1 : amount1Requested;
+
+    if (amount0 > 0) {
+      position.tokensOwed0 -= amount0;
+      IERC20(token0).transfer(recipient, amount0);
+    }
+    if (amount1 > 0) {
+      position.tokensOwed1 -= amount1;
+      IERC20(token1).transfer(recipient, amount1);
+    }
+  }
+
+  function burn(int24 tickLower, int24 tickUpper, uint128 amount)
+    external
+    returns (uint256 amount0, uint256 amount1) {
+      (Position.Info memory position, int256 amount0Int, int256 amount1Int) =
+        _modifyPosition(
+          ModifyPositionParams({
+            owner: msg.sender,
+            tickLower: tickLower,
+            tickUpper: tickUpper,
+            liquidityDelta: -int256(uint256(amount)).toInt128()
+          })
+        );
+
+      amount0 = uint256(-amount0Int);
+      amount1 = uint256(-amount1Int);
+
+      if (amount0 > 0 || amount1 > 0) {
+        (position.tokensOwed0, position.tokensOwed1) = (
+          position.tokensOwed0 + uint128(amount0),
+          position.tokensOwed1 + uint128(amount1)
+        );
+      }
+    }
+
 }
