@@ -77,7 +77,7 @@ contract CLAMM {
     int24 tickLower,
     int24 tickUpper,
     int128 liquidityDelta,
-    int24 tick    // current tick
+    int24 tick
   ) private returns (Position.Info storage position) {
     position = positions.get(owner, tickLower, tickUpper);
 
